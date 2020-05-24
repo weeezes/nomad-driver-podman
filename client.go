@@ -222,6 +222,26 @@ func (c *PodmanClient) InspectContainer(containerID string) (iopodman.InspectCon
 	return ret, err
 }
 
+// InspectImage data takes a name or ID of an image and returns the inspection
+// data as iopodman.InspectImageData.
+func (c *PodmanClient) InspectImage(imageID string) (iopodman.InspectImageData, error) {
+	var ret iopodman.InspectImageData
+	c.logger.Debug("Inspect image", "image", imageID)
+	err := c.withVarlink(func(varlinkConnection *varlink.Connection) error {
+		inspectJSON, err := iopodman.InspectImage().Call(c.ctx, varlinkConnection, imageID)
+		if err == nil {
+			err = json.Unmarshal([]byte(inspectJSON), &ret)
+			if err != nil {
+				c.logger.Error("failed to unmarshal inspect image", "err", err)
+				return err
+			}
+
+		}
+		return err
+	})
+	return ret, err
+}
+
 // getConnection opens a new varlink connection
 func (c *PodmanClient) getConnection() (*varlink.Connection, error) {
 	varlinkConnection, err := varlink.NewConnection(c.ctx, c.varlinkSocketPath)

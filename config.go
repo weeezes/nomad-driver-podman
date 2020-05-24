@@ -60,6 +60,8 @@ var (
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 		"image":              hclspec.NewAttr("image", "string", true),
 		"command":            hclspec.NewAttr("command", "string", false),
+		"entrypoint":         hclspec.NewAttr("entrypoint", "string", false),
+		"working_dir":        hclspec.NewAttr("working_dir", "string", false),
 		"hostname":           hclspec.NewAttr("hostname", "string", false),
 		"init":               hclspec.NewAttr("init", "bool", false),
 		"init_path":          hclspec.NewAttr("init_path", "string", false),
@@ -96,7 +98,9 @@ type PluginConfig struct {
 type TaskConfig struct {
 	Image             string             `codec:"image"`
 	Command           string             `codec:"command"`
+	Entrypoint        string             `codec:"entrypoint"`
 	Args              []string           `codec:"args"`
+	WorkingDir        string             `codec:"working_dir"`
 	Volumes           []string           `codec:"volumes"`
 	Hostname          string             `codec:"hostname"`
 	Init              bool               `codec:"init"`
