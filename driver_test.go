@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -585,10 +586,15 @@ func TestPodmanDriver_Init(t *testing.T) {
 	}
 
 	// only test --init if catatonit is installed
-	_, err := os.Stat("/usr/libexec/podman/catatonit")
+	initPath := "/usr/libexec/podman/catatonit"
+	_, err := os.Stat(initPath)
 	if os.IsNotExist(err) {
+		path, err := exec.LookPath("catatonit")
+		if err != nil {
 		t.Skip("Skipping --init test because catatonit is not installed")
 		return
+	}
+		initPath = path
 	}
 
 	taskCfg := newTaskConfig("", []string{
@@ -598,6 +604,7 @@ func TestPodmanDriver_Init(t *testing.T) {
 	})
 	// enable --init
 	taskCfg.Init = true
+	taskCfg.InitPath = initPath
 
 	task := &drivers.TaskConfig{
 		ID:        uuid.Generate(),
@@ -644,8 +651,20 @@ func TestPodmanDriver_OOM(t *testing.T) {
 		"-c",
 		"x=a; while true; do eval x='$x$x'; done",
 	})
-	// enable --init
+
+	// only enable init if catatonit is installed
+	initPath := "/usr/libexec/podman/catatonit"
+	_, err := os.Stat(initPath)
+	if os.IsNotExist(err) {
+		path, err := exec.LookPath("catatonit")
+		if err != nil {
+			t.Skip("Skipping oom test because catatonit is not installed")
+			return
+		}
+		initPath = path
+	}
 	taskCfg.Init = true
+	taskCfg.InitPath = initPath
 
 	task := &drivers.TaskConfig{
 		ID:        uuid.Generate(),
@@ -661,7 +680,7 @@ func TestPodmanDriver_OOM(t *testing.T) {
 	cleanup := d.MkAllocDir(task, true)
 	defer cleanup()
 
-	_, _, err := d.StartTask(task)
+	_, _, err = d.StartTask(task)
 	require.NoError(t, err)
 
 	defer d.DestroyTask(task.ID, true)
