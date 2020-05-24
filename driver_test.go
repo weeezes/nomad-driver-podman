@@ -646,7 +646,7 @@ func TestPodmanDriver_OOM(t *testing.T) {
 		// Incrementally creates a bigger and bigger variable.
 		"sh",
 		"-c",
-		"x=a; while true; do eval x='$x$x'; done",
+		"tail /dev/zero",
 	})
 
 	// only enable init if catatonit is installed
@@ -669,8 +669,8 @@ func TestPodmanDriver_OOM(t *testing.T) {
 		AllocID:   uuid.Generate(),
 		Resources: createBasicResources(),
 	}
-	// limit memory to 10MB to trigger oom soon enough
-	task.Resources.NomadResources.Memory.MemoryMB = 10
+	// limit memory to 5MB to trigger oom soon enough
+	task.Resources.NomadResources.Memory.MemoryMB = 5
 	require.NoError(t, task.EncodeConcreteDriverConfig(&taskCfg))
 
 	d := podmanDriverHarness(t, nil)
