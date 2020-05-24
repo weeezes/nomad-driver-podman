@@ -31,8 +31,6 @@ import (
 
 	"github.com/hashicorp/consul/lib/freeport"
 	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/nomad/client/taskenv"
-	ctestutil "github.com/hashicorp/nomad/client/testutil"
 	"github.com/hashicorp/nomad/helper/testlog"
 	"github.com/hashicorp/nomad/helper/uuid"
 	"github.com/hashicorp/nomad/nomad/structs"
@@ -72,9 +70,8 @@ func createBasicResources() *drivers.Resources {
 // A driver plugin interface and cleanup function is returned
 func podmanDriverHarness(t *testing.T, cfg map[string]interface{}) *dtestutil.DriverHarness {
 
-	ctestutil.RequireRoot(t)
-
 	d := NewPodmanDriver(testlog.HCLogger(t)).(*Driver)
+	d.podmanClient = newPodmanClient()
 	d.config.Volumes.Enabled = true
 	if enforce, err := ioutil.ReadFile("/sys/fs/selinux/enforce"); err == nil {
 		if string(enforce) == "1" {
