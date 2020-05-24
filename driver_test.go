@@ -766,8 +766,6 @@ func TestPodmanDriver_Swap(t *testing.T) {
 	taskCfg.MemoryReservation = "40m"
 	// and allow mem+swap of 100MB (= 50 MB Swap)
 	taskCfg.MemorySwap = "100m"
-	// set a swappiness of 60
-	taskCfg.MemorySwappiness = 60
 	require.NoError(t, task.EncodeConcreteDriverConfig(&taskCfg))
 
 	containerName := BuildContainerName(task)
@@ -797,8 +795,6 @@ func TestPodmanDriver_Swap(t *testing.T) {
 	require.Equal(t, int64(52428800), inspectData.HostConfig.Memory)
 	require.Equal(t, int64(41943040), inspectData.HostConfig.MemoryReservation)
 	require.Equal(t, int64(104857600), inspectData.HostConfig.MemorySwap)
-	require.Equal(t, int64(60), inspectData.HostConfig.MemorySwappiness)
-
 }
 
 // check tmpfs mounts
