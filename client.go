@@ -43,6 +43,8 @@ type PodmanClient struct {
 
 	// logger will log to the Nomad agent
 	logger hclog.Logger
+
+	varlinkSocketPath string
 }
 
 // withVarlink calls a podman varlink function and retries N times in case of network failures
@@ -220,9 +222,28 @@ func (c *PodmanClient) InspectContainer(containerID string) (iopodman.InspectCon
 	return ret, err
 }
 
+// InspectImage data takes a name or ID of an image and returns the inspection
+// data as iopodman.InspectImageData.
+func (c *PodmanClient) InspectImage(imageID string) (iopodman.InspectImageData, error) {
+	var ret iopodman.InspectImageData
+	c.logger.Debug("Inspect image", "image", imageID)
+	err := c.withVarlink(func(varlinkConnection *varlink.Connection) error {
+		inspectJSON, err := iopodman.InspectImage().Call(c.ctx, varlinkConnection, imageID)
+		if err == nil {
+			err = json.Unmarshal([]byte(inspectJSON), &ret)
+			if err != nil {
+				c.logger.Error("failed to unmarshal inspect image", "err", err)
+				return err
+			}
+
+		}
+		return err
+	})
+	return ret, err
+}
+
 // getConnection opens a new varlink connection
 func (c *PodmanClient) getConnection() (*varlink.Connection, error) {
-	// FIXME: a parameter for the socket would be nice
-	varlinkConnection, err := varlink.NewConnection(c.ctx, "unix://run/podman/io.podman")
+	varlinkConnection, err := varlink.NewConnection(c.ctx, c.varlinkSocketPath)
 	return varlinkConnection, err
 }

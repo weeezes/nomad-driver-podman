@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"strings"
 
 	"github.com/hashicorp/nomad/nomad/structs"
 
@@ -152,6 +153,8 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 	if cfg.AgentConfig != nil {
 		d.nomadConfig = cfg.AgentConfig.Driver
 	}
+
+	d.podmanClient.varlinkSocketPath = config.SocketPath
 
 	return nil
 }
@@ -327,11 +330,36 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		return nil, nil, fmt.Errorf("image name required")
 	}
 
-	allArgs := []string{driverConfig.Image}
-	if driverConfig.Command != "" {
-		allArgs = append(allArgs, driverConfig.Command)
+	img, err := d.podmanClient.InspectImage(driverConfig.Image)
+	if err != nil {
+		return nil, nil, fmt.Errorf("image %s couldn't be inspected", driverConfig.Image)
 	}
+	d.logger.Debug("Image", fmt.Sprintf("%#v", img))
+	d.logger.Debug("Image config", fmt.Sprintf("%#v", img.Config))
+
+	allArgs := []string{driverConfig.Image}
+	command := img.Config.Cmd
+	// Use the images default command, unless the user overrides
+	// it by setting the "command" parameter in the task config
+	if driverConfig.Command != "" {
+		command = []string{driverConfig.Command}
+	}
+	allArgs = append(allArgs, command...)
 	allArgs = append(allArgs, driverConfig.Args...)
+
+	entryPoint := strings.Join(img.Config.Entrypoint, " ")
+	if driverConfig.Entrypoint != "" {
+		entryPoint = driverConfig.Entrypoint
+	}
+
+	workingDir := img.Config.WorkingDir
+	if workingDir == "" {
+		workingDir = "/"
+	}
+	if driverConfig.WorkingDir != "" {
+		workingDir = driverConfig.WorkingDir
+	}
+
 	containerName := BuildContainerName(cfg)
 	memoryLimit := fmt.Sprintf("%dm", cfg.Resources.NomadResources.Memory.MemoryMB)
 	cpuShares := cfg.Resources.LinuxResources.CPUShares
@@ -339,28 +367,58 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		fmt.Sprintf("path=%s", cfg.StdoutPath),
 	}
 
+	// Handle mounting directories local to the allocation
+	// and arbitrary host paths if the driver has "volumes" enabled
+	var allocVolumes []string
+	volumeEnv := make(map[string]string)
+	for _, volume := range driverConfig.Volumes {
+		v := ""
+		if strings.HasPrefix(volume, "local/") {
+			v = strings.TrimPrefix(volume, "local/")
+			v = strings.Join([]string{cfg.TaskDir().LocalDir, v}, "/")
+			volumeEnv[taskenv.TaskLocalDir] = strings.Split(v,":")[1]
+		} else if strings.HasPrefix(volume, "alloc/") {
+			v = strings.TrimPrefix(volume, "alloc/")
+			v = strings.Join([]string{cfg.TaskDir().SharedAllocDir, v}, "/")
+			volumeEnv[taskenv.AllocDir] = strings.Split(v,":")[1]
+		} else if strings.HasPrefix(volume, "secrets/") {
+			v = strings.TrimPrefix(volume, "secrets/")
+			v = strings.Join([]string{cfg.TaskDir().SecretsDir, v}, "/")
+			volumeEnv[taskenv.SecretsDir] = strings.Split(v,":")[1]
+		} else {
+			// If the volume isn't relative to the allocations directory
+			// we need to be sure that mounting volumes from outside the
+			// allocation directory is allowed by the driver configuration.
+			if d.config.Volumes.Enabled {
+				v = volume
+			} else {
+				d.logger.Warn("Volumes", fmt.Sprintf("trying to mount %#v, which is outside the allocation directory, while volume mounting from host paths haven't been enabled", volume))
+			}
+		}
+
+		allocVolumes = append(allocVolumes, v)
+	}
+
+	d.logger.Debug("Volumes", fmt.Sprintf("%#v", allocVolumes))
+
+	// reset env so we don't inherit host env by default
+	cfg.Env = make(map[string]string)
 	// ensure to include port_map into tasks environment map
 	cfg.Env = taskenv.SetPortMapEnvs(cfg.Env, driverConfig.PortMap)
-
+	// Set the allocation local volumes
+	for k, v := range volumeEnv {
+		cfg.Env[k] = v
+	}
+	// Set the env to image defaults
+	allEnv := img.Config.Env
 	// convert environment map into a k=v list
-	allEnv := cfg.EnvList()
-
-	// ensure to mount nomad alloc dirs into the container
-	allVolumes := []string{
-		fmt.Sprintf("%s:%s", cfg.TaskDir().SharedAllocDir, cfg.Env[taskenv.AllocDir]),
-		fmt.Sprintf("%s:%s", cfg.TaskDir().LocalDir, cfg.Env[taskenv.TaskLocalDir]),
-		fmt.Sprintf("%s:%s", cfg.TaskDir().SecretsDir, cfg.Env[taskenv.SecretsDir]),
-	}
-
-	if d.config.Volumes.Enabled {
-		// add task specific volumes, if enabled
-		allVolumes = append(allVolumes, driverConfig.Volumes...)
-	}
+	allEnv = append(allEnv, cfg.EnvList()...)
+	d.logger.Debug("Env", fmt.Sprintf("%#v", allEnv))
 
 	// Apply SELinux Label to each volume
 	if selinuxLabel := d.config.Volumes.SelinuxLabel; selinuxLabel != "" {
-		for i := range allVolumes {
-			allVolumes[i] = fmt.Sprintf("%s:%s", allVolumes[i], selinuxLabel)
+		for i := range allocVolumes {
+			allocVolumes[i] = fmt.Sprintf("%s:%s", allocVolumes[i], selinuxLabel)
 		}
 	}
 
@@ -371,9 +429,11 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 
 	createOpts := iopodman.Create{
 		Args:              allArgs,
+		Entrypoint:        &entryPoint,
+		WorkDir:           &workingDir,
 		Env:               &allEnv,
 		Name:              &containerName,
-		Volume:            &allVolumes,
+		Volume:            &allocVolumes,
 		Memory:            &memoryLimit,
 		CpuShares:         &cpuShares,
 		LogOpt:            &logOpts,
@@ -383,7 +443,6 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		User:              &cfg.User,
 		MemoryReservation: &driverConfig.MemoryReservation,
 		MemorySwap:        &swap,
-		MemorySwappiness:  &driverConfig.MemorySwappiness,
 		Tmpfs:             &driverConfig.Tmpfs,
 	}
 

@@ -48,6 +48,11 @@ var (
 			hclspec.NewAttr("recover_stopped", "bool", false),
 			hclspec.NewLiteral("true"),
 		),
+		// the path to the VarLink socket
+		"socket_path": hclspec.NewDefault(
+			hclspec.NewAttr("socket_path", "string", false),
+			hclspec.NewLiteral(`"unix://run/podman/io.podman"`),
+		),
 	})
 
 	// taskConfigSpec is the hcl specification for the driver config section of
@@ -55,6 +60,8 @@ var (
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 		"image":              hclspec.NewAttr("image", "string", true),
 		"command":            hclspec.NewAttr("command", "string", false),
+		"entrypoint":         hclspec.NewAttr("entrypoint", "string", false),
+		"working_dir":        hclspec.NewAttr("working_dir", "string", false),
 		"hostname":           hclspec.NewAttr("hostname", "string", false),
 		"init":               hclspec.NewAttr("init", "bool", false),
 		"init_path":          hclspec.NewAttr("init_path", "string", false),
@@ -84,13 +91,16 @@ type PluginConfig struct {
 	Volumes        VolumeConfig `codec:"volumes"`
 	GC             GCConfig     `codec:"gc"`
 	RecoverStopped bool         `codec:"recover_stopped"`
+	SocketPath     string       `codec:"socket_path"`
 }
 
 // TaskConfig is the driver configuration of a task within a job
 type TaskConfig struct {
 	Image             string             `codec:"image"`
 	Command           string             `codec:"command"`
+	Entrypoint        string             `codec:"entrypoint"`
 	Args              []string           `codec:"args"`
+	WorkingDir        string             `codec:"working_dir"`
 	Volumes           []string           `codec:"volumes"`
 	Hostname          string             `codec:"hostname"`
 	Init              bool               `codec:"init"`
