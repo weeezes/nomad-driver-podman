@@ -36,6 +36,7 @@ import (
 	"github.com/hashicorp/nomad/helper/uuid"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/plugins/drivers"
+	"github.com/hashicorp/nomad/client/taskenv"
 	dtestutil "github.com/hashicorp/nomad/plugins/drivers/testutils"
 	tu "github.com/hashicorp/nomad/testutil"
 	"github.com/pascomnet/nomad-driver-podman/iopodman"
@@ -249,6 +250,7 @@ func TestPodmanDriver_Start_Wait_AllocDir(t *testing.T) {
 
 	exp := []byte{'w', 'i', 'n'}
 	file := "output.txt"
+	allocDir := "/mnt/alloc"
 
 	taskCfg := newTaskConfig("", []string{
 		"sh",
@@ -256,6 +258,7 @@ func TestPodmanDriver_Start_Wait_AllocDir(t *testing.T) {
 		fmt.Sprintf(`echo -n %s > $%s/%s; sleep 1`,
 			string(exp), taskenv.AllocDir, file),
 	})
+	taskCfg.Volumes = []string{fmt.Sprintf("alloc/:%s", allocDir)}
 	task := &drivers.TaskConfig{
 		ID:        uuid.Generate(),
 		Name:      "start_wait_allocDir",
