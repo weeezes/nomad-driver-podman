@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -817,6 +818,17 @@ func TestPodmanDriver_Swap(t *testing.T) {
 	require.Equal(t, int64(52428800), inspectData.HostConfig.Memory)
 	require.Equal(t, int64(41943040), inspectData.HostConfig.MemoryReservation)
 	require.Equal(t, int64(104857600), inspectData.HostConfig.MemorySwap)
+
+	procFilesystems, err := getProcFilesystems()
+	if err == nil {
+		cgroupv2 := false
+		for _,l := range procFilesystems {
+			cgroupv2 = cgroupv2 || strings.HasSuffix(l, "cgroup2")
+		}
+		if cgroupv2 == false {
+			require.Equal(t, int64(60), inspectData.HostConfig.MemorySwappiness)
+		}
+	}
 }
 
 // check tmpfs mounts
