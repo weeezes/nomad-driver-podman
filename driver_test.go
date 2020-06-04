@@ -23,12 +23,12 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
 	"time"
-	"flag"
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/nomad/helper/freeport"
@@ -48,8 +48,27 @@ var (
 	// busyboxLongRunningCmd is a busybox command that runs indefinitely, and
 	// ideally responds to SIGINT/SIGTERM.  Sadly, busybox:1.29.3 /bin/sleep doesn't.
 	busyboxLongRunningCmd = []string{"nc", "-l", "-p", "3000", "127.0.0.1"}
-    varlinkSocketPath = flag.String("socket-path", "unix://run/user/1000/podman/io.podman", "varlink socket path")
+    varlinkSocketPath = ""
 )
+
+func init() {
+	user, _ := user.Current()
+	procFilesystems, err := getProcFilesystems()
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	socketPath, err := guessSocketPath(user, procFilesystems)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	varlinkSocketPath = socketPath
+}
 
 func createBasicResources() *drivers.Resources {
 	res := drivers.Resources{
@@ -912,7 +931,7 @@ func getContainer(t *testing.T, containerName string) iopodman.Container {
 }
 
 func getPodmanConnection(ctx context.Context) (*varlink.Connection, error) {
-	varlinkConnection, err := varlink.NewConnection(ctx, *varlinkSocketPath)
+	varlinkConnection, err := varlink.NewConnection(ctx, varlinkSocketPath)
 	return varlinkConnection, err
 }
 
@@ -924,7 +943,7 @@ func newPodmanClient() *PodmanClient {
 	client := &PodmanClient{
 		ctx:    context.Background(),
 		logger: testLogger,
-		varlinkSocketPath: *varlinkSocketPath,
+		varlinkSocketPath: varlinkSocketPath,
 	}
 	return client
 }
