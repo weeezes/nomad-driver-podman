@@ -23,15 +23,16 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
-	"flag"
 
-	"github.com/hashicorp/consul/lib/freeport"
 	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/nomad/helper/freeport"
 	"github.com/hashicorp/nomad/helper/testlog"
 	"github.com/hashicorp/nomad/helper/uuid"
 	"github.com/hashicorp/nomad/nomad/structs"
@@ -48,8 +49,27 @@ var (
 	// busyboxLongRunningCmd is a busybox command that runs indefinitely, and
 	// ideally responds to SIGINT/SIGTERM.  Sadly, busybox:1.29.3 /bin/sleep doesn't.
 	busyboxLongRunningCmd = []string{"nc", "-l", "-p", "3000", "127.0.0.1"}
-    varlinkSocketPath = flag.String("socket-path", "unix://run/user/1000/podman/io.podman", "varlink socket path")
+    varlinkSocketPath = ""
 )
+
+func init() {
+	user, _ := user.Current()
+	procFilesystems, err := getProcFilesystems()
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	socketPath, err := guessSocketPath(user, procFilesystems)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	varlinkSocketPath = socketPath
+}
 
 func createBasicResources() *drivers.Resources {
 	res := drivers.Resources{
@@ -505,7 +525,8 @@ func TestPodmanDriver_PortMap(t *testing.T) {
 	if !tu.IsCI() {
 		t.Parallel()
 	}
-	ports := freeport.GetT(t, 2)
+	ports := freeport.MustTake(2)
+	defer freeport.Return(ports)
 
 	taskCfg := newTaskConfig("", busyboxLongRunningCmd)
 
@@ -797,6 +818,17 @@ func TestPodmanDriver_Swap(t *testing.T) {
 	require.Equal(t, int64(52428800), inspectData.HostConfig.Memory)
 	require.Equal(t, int64(41943040), inspectData.HostConfig.MemoryReservation)
 	require.Equal(t, int64(104857600), inspectData.HostConfig.MemorySwap)
+
+	procFilesystems, err := getProcFilesystems()
+	if err == nil {
+		cgroupv2 := false
+		for _,l := range procFilesystems {
+			cgroupv2 = cgroupv2 || strings.HasSuffix(l, "cgroup2")
+		}
+		if cgroupv2 == false {
+			require.Equal(t, int64(60), inspectData.HostConfig.MemorySwappiness)
+		}
+	}
 }
 
 // check tmpfs mounts
@@ -847,9 +879,9 @@ func TestPodmanDriver_Tmpfs(t *testing.T) {
 
 	// see if tmpfs was propagated to podman
 	inspectData := inspectContainer(t, containerName)
-	expectedFilesystem := map[string]string {
-		"/tmpdata1" : "rw,rprivate,noexec,nosuid,nodev,tmpcopyup",
-		"/tmpdata2" : "rw,rprivate,noexec,nosuid,nodev,tmpcopyup",
+	expectedFilesystem := map[string]string{
+		"/tmpdata1": "rw,rprivate,noexec,nosuid,nodev,tmpcopyup",
+		"/tmpdata2": "rw,rprivate,noexec,nosuid,nodev,tmpcopyup",
 	}
 	require.Exactly(t, expectedFilesystem, inspectData.HostConfig.Tmpfs)
 
@@ -911,7 +943,7 @@ func getContainer(t *testing.T, containerName string) iopodman.Container {
 }
 
 func getPodmanConnection(ctx context.Context) (*varlink.Connection, error) {
-	varlinkConnection, err := varlink.NewConnection(ctx, *varlinkSocketPath)
+	varlinkConnection, err := varlink.NewConnection(ctx, varlinkSocketPath)
 	return varlinkConnection, err
 }
 
@@ -923,7 +955,7 @@ func newPodmanClient() *PodmanClient {
 	client := &PodmanClient{
 		ctx:    context.Background(),
 		logger: testLogger,
-		varlinkSocketPath: *varlinkSocketPath,
+		varlinkSocketPath: varlinkSocketPath,
 	}
 	return client
 }

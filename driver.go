@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 	"strings"
+	"os/user"
 
 	"github.com/hashicorp/nomad/nomad/structs"
 
@@ -154,7 +155,24 @@ func (d *Driver) SetConfig(cfg *base.Config) error {
 		d.nomadConfig = cfg.AgentConfig.Driver
 	}
 
-	d.podmanClient.varlinkSocketPath = config.SocketPath
+	if config.SocketPath != "" {
+		d.podmanClient.varlinkSocketPath = config.SocketPath
+	} else {
+		user, _ := user.Current()
+		procFilesystems, err := getProcFilesystems()
+
+		if err != nil {
+			return err
+		}
+
+		socketPath, err := guessSocketPath(user, procFilesystems)
+
+		if err != nil {
+			return err
+		}
+
+		d.podmanClient.varlinkSocketPath = socketPath
+	}
 
 	return nil
 }
@@ -427,6 +445,18 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		swap = driverConfig.MemorySwap
 	}
 
+	procFilesystems, err := getProcFilesystems()
+	swappiness := new(int64)
+	if err == nil {
+		cgroupv2 := false
+		for _,l := range procFilesystems {
+			cgroupv2 = cgroupv2 || strings.HasSuffix(l, "cgroup2")
+		}
+		if cgroupv2 == false {
+			swappiness = &driverConfig.MemorySwappiness
+		}
+	}
+
 	createOpts := iopodman.Create{
 		Args:              allArgs,
 		Entrypoint:        &entryPoint,
@@ -443,6 +473,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		User:              &cfg.User,
 		MemoryReservation: &driverConfig.MemoryReservation,
 		MemorySwap:        &swap,
+		MemorySwappiness:  swappiness,
 		Tmpfs:             &driverConfig.Tmpfs,
 	}
 
@@ -484,7 +515,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	if err == nil {
 		// ok, seems we found a container with similar name
 		if otherContainerPs.State == "running" {
-			// it's still running. So let's use it instead of creating a new one 
+			// it's still running. So let's use it instead of creating a new one
 			d.logger.Info("Detect running container with same name, we reuse it", "task", cfg.ID, "container", otherContainerPs.Id)
 			containerID = otherContainerPs.Id
 			recoverRunningContainer = true

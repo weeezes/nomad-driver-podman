@@ -22,8 +22,12 @@ import (
 	"github.com/pascomnet/nomad-driver-podman/iopodman"
 	"github.com/varlink/go/varlink"
 
+	"os"
+	"bufio"
+	"os/user"
 	"context"
 	"encoding/json"
+	"strings"
 	"fmt"
 	"net"
 	"time"
@@ -240,6 +244,50 @@ func (c *PodmanClient) InspectImage(imageID string) (iopodman.InspectImageData, 
 		return err
 	})
 	return ret, err
+}
+
+func guessSocketPath(user *user.User, procFilesystems []string) (string, error) {
+	rootVarlinkPath := "unix://run/podman/io.podman"
+	if user.Uid == "0" {
+		return rootVarlinkPath, nil
+	}
+
+	cgroupv := 0
+	for _,l := range procFilesystems {
+		if cgroupv == 0 && strings.HasSuffix(l, "cgroup") {
+			cgroupv = 1
+			continue
+		}
+		if strings.HasSuffix(l, "cgroup2") {
+			cgroupv = 2
+		}
+	}
+
+	if cgroupv < 2 {
+		return rootVarlinkPath, nil
+	}
+
+	if cgroupv == 2 {
+		return fmt.Sprintf("unix://run/user/%s/podman/io.podman", user.Uid), nil
+	}
+
+	return "", fmt.Errorf("couldn't guess a path for the varlink socket, please set the socket_path setting for the driver to the path where you're running Podman")
+}
+
+func getProcFilesystems() ([]string, error) {
+	file, err := os.Open("/proc/filesystems")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	return lines, scanner.Err()
 }
 
 // getConnection opens a new varlink connection
